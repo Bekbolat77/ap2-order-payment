@@ -38,9 +38,7 @@ func NewHandler(orderUsecase *usecase.OrderUsecase) *Handler {
 func (h *Handler) RegisterRoutes(router *gin.Engine) {
 	router.POST("/orders", h.CreateOrder)
 	router.GET("/orders/:id", h.GetOrderByID)
-
 	router.GET("/orders/customer/:customer_id", h.GetOrdersByCustomerID)
-
 	router.PATCH("/orders/:id/cancel", h.CancelOrder)
 }
 
@@ -60,11 +58,8 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, usecase.ErrInvalidAmount):
+		case errors.Is(err, usecase.ErrInvalidOrderAmount):
 			c.JSON(nethttp.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		case errors.Is(err, usecase.ErrPaymentUnavailable):
-			c.JSON(nethttp.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
 		default:
 			c.JSON(nethttp.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -91,7 +86,6 @@ func (h *Handler) GetOrderByID(c *gin.Context) {
 	c.JSON(nethttp.StatusOK, toOrderResponse(order))
 }
 
-
 func (h *Handler) GetOrdersByCustomerID(c *gin.Context) {
 	customerID := c.Param("customer_id")
 
@@ -105,8 +99,6 @@ func (h *Handler) GetOrdersByCustomerID(c *gin.Context) {
 		return
 	}
 
-
-	
 	response := make([]orderResponse, 0, len(orders))
 	for _, order := range orders {
 		orderCopy := order

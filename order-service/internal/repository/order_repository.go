@@ -61,9 +61,6 @@ func (r *OrderRepository) GetByID(ctx context.Context, id string) (*domain.Order
 	return &order, nil
 }
 
-
-
-
 func (r *OrderRepository) GetByCustomerID(ctx context.Context, customerID string) ([]domain.Order, error) {
 	query := `
 		SELECT id, customer_id, item_name, amount, status, created_at
@@ -100,11 +97,6 @@ func (r *OrderRepository) GetByCustomerID(ctx context.Context, customerID string
 
 	return orders, nil
 }
-
-
-
-
-
 
 func (r *OrderRepository) UpdateStatus(ctx context.Context, id string, status string) error {
 	query := `UPDATE orders SET status = ? WHERE id = ?`

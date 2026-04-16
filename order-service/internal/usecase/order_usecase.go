@@ -1,44 +1,37 @@
 package usecase
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
+
+	paymentpb "github.com/Bekbolat77/ap2-payment-generated/paymentpb"
 
 	"example.com/order-service/internal/domain"
 )
 
 var (
-	ErrInvalidAmount            = errors.New("amount must be greater than 0")
 	ErrOrderNotFound            = errors.New("order not found")
-
 	ErrOrdersNotFound           = errors.New("orders not found")
-
+	ErrInvalidOrderAmount       = errors.New("amount must be greater than 0")
 	ErrOnlyPendingCanBeCanceled = errors.New("only pending orders can be cancelled")
 	ErrPaidOrderCannotBeCancel  = errors.New("paid orders cannot be cancelled")
-	ErrPaymentUnavailable       = errors.New("payment service unavailable")
 )
 
 type OrderRepository interface {
 	Create(ctx context.Context, order *domain.Order) error
 	GetByID(ctx context.Context, id string) (*domain.Order, error)
-
-	GetByCustomerID(ctx context.Context, customerID string) ([]domain.Order, error)
-
 	UpdateStatus(ctx context.Context, id string, status string) error
+	GetByCustomerID(ctx context.Context, customerID string) ([]domain.Order, error)
 }
 
 type OrderUsecase struct {
-	repo              OrderRepository
-	httpClient        *http.Client
-	paymentServiceURL string
+	orderRepo     OrderRepository
+	paymentClient paymentpb.PaymentServiceClient
 }
 
 type CreateOrderInput struct {
@@ -47,36 +40,20 @@ type CreateOrderInput struct {
 	Amount     int64
 }
 
-type paymentRequest struct {
-	OrderID string `json:"order_id"`
-	Amount  int64  `json:"amount"`
-}
-
-type paymentResponse struct {
-	OrderID       string `json:"order_id"`
-	TransactionID string `json:"transaction_id"`
-	Status        string `json:"status"`
-}
-
-func NewOrderUsecase(
-	repo OrderRepository,
-	httpClient *http.Client,
-	paymentServiceURL string,
-) *OrderUsecase {
+func NewOrderUsecase(orderRepo OrderRepository, paymentClient paymentpb.PaymentServiceClient) *OrderUsecase {
 	return &OrderUsecase{
-		repo:              repo,
-		httpClient:        httpClient,
-		paymentServiceURL: strings.TrimRight(paymentServiceURL, "/"),
+		orderRepo:     orderRepo,
+		paymentClient: paymentClient,
 	}
 }
 
 func (u *OrderUsecase) CreateOrder(ctx context.Context, input CreateOrderInput) (*domain.Order, error) {
 	if input.Amount <= 0 {
-		return nil, ErrInvalidAmount
+		return nil, ErrInvalidOrderAmount
 	}
 
 	order := &domain.Order{
-		ID:         newID(),
+		ID:         generateID(),
 		CustomerID: strings.TrimSpace(input.CustomerID),
 		ItemName:   strings.TrimSpace(input.ItemName),
 		Amount:     input.Amount,
@@ -84,40 +61,33 @@ func (u *OrderUsecase) CreateOrder(ctx context.Context, input CreateOrderInput) 
 		CreatedAt:  time.Now().UTC(),
 	}
 
-	if err := u.repo.Create(ctx, order); err != nil {
+	if err := u.orderRepo.Create(ctx, order); err != nil {
 		return nil, err
 	}
 
-	paymentStatus, err := u.authorizePayment(ctx, order.ID, order.Amount)
+	paymentResp, err := u.paymentClient.ProcessPayment(ctx, &paymentpb.PaymentRequest{
+		OrderId: order.ID,
+		Amount:  order.Amount,
+	})
 	if err != nil {
-		_ = u.repo.UpdateStatus(ctx, order.ID, domain.OrderStatusFailed)
-		order.Status = domain.OrderStatusFailed
 		return nil, err
 	}
 
-	switch paymentStatus {
-	case "Authorized":
-		if err := u.repo.UpdateStatus(ctx, order.ID, domain.OrderStatusPaid); err != nil {
-			return nil, err
-		}
+	if paymentResp.GetStatus() == "Authorized" {
 		order.Status = domain.OrderStatusPaid
-	case "Declined":
-		if err := u.repo.UpdateStatus(ctx, order.ID, domain.OrderStatusFailed); err != nil {
-			return nil, err
-		}
+	} else {
 		order.Status = domain.OrderStatusFailed
-	default:
-		if err := u.repo.UpdateStatus(ctx, order.ID, domain.OrderStatusFailed); err != nil {
-			return nil, err
-		}
-		order.Status = domain.OrderStatusFailed
+	}
+
+	if err := u.orderRepo.UpdateStatus(ctx, order.ID, order.Status); err != nil {
+		return nil, err
 	}
 
 	return order, nil
 }
 
 func (u *OrderUsecase) GetOrderByID(ctx context.Context, id string) (*domain.Order, error) {
-	order, err := u.repo.GetByID(ctx, strings.TrimSpace(id))
+	order, err := u.orderRepo.GetByID(ctx, strings.TrimSpace(id))
 	if err != nil {
 		return nil, err
 	}
@@ -127,10 +97,8 @@ func (u *OrderUsecase) GetOrderByID(ctx context.Context, id string) (*domain.Ord
 	return order, nil
 }
 
-
-
 func (u *OrderUsecase) GetOrdersByCustomerID(ctx context.Context, customerID string) ([]domain.Order, error) {
-	orders, err := u.repo.GetByCustomerID(ctx, strings.TrimSpace(customerID))
+	orders, err := u.orderRepo.GetByCustomerID(ctx, strings.TrimSpace(customerID))
 	if err != nil {
 		return nil, err
 	}
@@ -140,21 +108,8 @@ func (u *OrderUsecase) GetOrdersByCustomerID(ctx context.Context, customerID str
 	return orders, nil
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 func (u *OrderUsecase) CancelOrder(ctx context.Context, id string) (*domain.Order, error) {
-	order, err := u.repo.GetByID(ctx, strings.TrimSpace(id))
+	order, err := u.orderRepo.GetByID(ctx, strings.TrimSpace(id))
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +124,7 @@ func (u *OrderUsecase) CancelOrder(ctx context.Context, id string) (*domain.Orde
 		return nil, ErrOnlyPendingCanBeCanceled
 	}
 
-	if err := u.repo.UpdateStatus(ctx, order.ID, domain.OrderStatusCancelled); err != nil {
+	if err := u.orderRepo.UpdateStatus(ctx, order.ID, domain.OrderStatusCancelled); err != nil {
 		return nil, err
 	}
 
@@ -177,51 +132,7 @@ func (u *OrderUsecase) CancelOrder(ctx context.Context, id string) (*domain.Orde
 	return order, nil
 }
 
-func (u *OrderUsecase) authorizePayment(ctx context.Context, orderID string, amount int64) (string, error) {
-	payload := paymentRequest{
-		OrderID: orderID,
-		Amount:  amount,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		u.paymentServiceURL+"/payments",
-		bytes.NewBuffer(body),
-	)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := u.httpClient.Do(req)
-	if err != nil {
-		return "", ErrPaymentUnavailable
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 500 {
-		return "", ErrPaymentUnavailable
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("payment service returned status %d", resp.StatusCode)
-	}
-
-	var pr paymentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
-		return "", err
-	}
-
-	return pr.Status, nil
-}
-
-func newID() string {
+func generateID() string {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	if err != nil {
