@@ -15,11 +15,13 @@ import (
 var (
 	ErrInvalidAmount   = errors.New("amount must be greater than 0")
 	ErrPaymentNotFound = errors.New("payment not found")
+	ErrInvalidStatus   = errors.New("status must be Authorized or Declined")
 )
 
 type PaymentRepository interface {
 	Create(ctx context.Context, payment *domain.Payment) error
 	GetByOrderID(ctx context.Context, orderID string) (*domain.Payment, error)
+	ListByStatus(ctx context.Context, status string) ([]domain.Payment, error)
 }
 
 type PaymentUsecase struct {
@@ -71,6 +73,16 @@ func (u *PaymentUsecase) GetPaymentByOrderID(ctx context.Context, orderID string
 		return nil, ErrPaymentNotFound
 	}
 	return payment, nil
+}
+
+func (u *PaymentUsecase) ListPaymentsByStatus(ctx context.Context, status string) ([]domain.Payment, error) {
+	status = strings.TrimSpace(status)
+
+	if status != domain.PaymentStatusAuthorized && status != domain.PaymentStatusDeclined {
+		return nil, ErrInvalidStatus
+	}
+
+	return u.repo.ListByStatus(ctx, status)
 }
 
 func newID() string {
