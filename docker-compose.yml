@@ -1,0 +1,69 @@
+services:
+  mysql:
+    image: mysql:9
+    container_name: ap2_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ap2_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    restart: unless-stopped
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    container_name: ap2_payment_service
+    environment:
+      GRPC_PORT: "50051"
+      PAYMENT_DB_DSN: "root:root@tcp(mysql:3306)/payment_db?parseTime=true"
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+      PAYMENT_QUEUE: "payment.completed"
+    ports:
+      - "50051:50051"
+    depends_on:
+      - mysql
+      - rabbitmq
+    restart: on-failure
+
+  order-service:
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
+    container_name: ap2_order_service
+    environment:
+      PORT: "8081"
+      ORDER_GRPC_PORT: "50052"
+      ORDER_DB_DSN: "root:root@tcp(mysql:3306)/order_db?parseTime=true"
+      PAYMENT_GRPC_ADDR: "payment-service:50051"
+    ports:
+      - "8081:8081"
+      - "50052:50052"
+    depends_on:
+      - mysql
+      - payment-service
+    restart: on-failure
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: ap2_notification_service
+    environment:
+      RABBITMQ_URL: "amqp://guest:guest@rabbitmq:5672/"
+    depends_on:
+      - rabbitmq
+    restart: on-failure
+
+volumes:
+  mysql_data:

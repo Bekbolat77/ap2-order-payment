@@ -1,0 +1,23 @@
+CREATE DATABASE IF NOT EXISTS order_db;
+CREATE DATABASE IF NOT EXISTS payment_db;
+
+USE order_db;
+
+CREATE TABLE IF NOT EXISTS orders (
+    id VARCHAR(64) PRIMARY KEY,
+    customer_id VARCHAR(255) NOT NULL,
+    item_name VARCHAR(255) NOT NULL,
+    amount BIGINT NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+USE payment_db;
+
+CREATE TABLE IF NOT EXISTS payments (
+    id VARCHAR(64) PRIMARY KEY,
+    order_id VARCHAR(64) NOT NULL,
+    transaction_id VARCHAR(64) NOT NULL,
+    amount BIGINT NOT NULL,
+    status VARCHAR(50) NOT NULL
+);

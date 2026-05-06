@@ -21,7 +21,6 @@ func NewServer(paymentUsecase *usecase.PaymentUsecase) *Server {
 		paymentUsecase: paymentUsecase,
 	}
 }
-
 func (s *Server) ProcessPayment(ctx context.Context, req *paymentpb.PaymentRequest) (*paymentpb.PaymentResponse, error) {
 	payment, err := s.paymentUsecase.CreatePayment(ctx, usecase.CreatePaymentInput{
 		OrderID: req.GetOrderId(),

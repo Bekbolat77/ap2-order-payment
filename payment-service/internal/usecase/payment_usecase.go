@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"example.com/payment-service/internal/broker"
 	"example.com/payment-service/internal/domain"
 )
 
@@ -24,13 +25,19 @@ type PaymentRepository interface {
 	ListByStatus(ctx context.Context, status string) ([]domain.Payment, error)
 }
 
-type PaymentUsecase struct {
-	repo PaymentRepository
+type PaymentPublisher interface {
+	PublishPaymentCompleted(ctx context.Context, event broker.PaymentCompletedEvent) error
 }
 
-func NewPaymentUsecase(repo PaymentRepository) *PaymentUsecase {
+type PaymentUsecase struct {
+	repo      PaymentRepository
+	publisher PaymentPublisher
+}
+
+func NewPaymentUsecase(repo PaymentRepository, publisher PaymentPublisher) *PaymentUsecase {
 	return &PaymentUsecase{
-		repo: repo,
+		repo:      repo,
+		publisher: publisher,
 	}
 }
 
@@ -59,6 +66,20 @@ func (u *PaymentUsecase) CreatePayment(ctx context.Context, input CreatePaymentI
 
 	if err := u.repo.Create(ctx, payment); err != nil {
 		return nil, err
+	}
+
+	if payment.Status == domain.PaymentStatusAuthorized && u.publisher != nil {
+		event := broker.PaymentCompletedEvent{
+			EventID:       payment.ID,
+			OrderID:       payment.OrderID,
+			Amount:        float64(payment.Amount) / 100,
+			CustomerEmail: "user@example.com",
+			Status:        payment.Status,
+		}
+
+		if err := u.publisher.PublishPaymentCompleted(ctx, event); err != nil {
+			return nil, err
+		}
 	}
 
 	return payment, nil
